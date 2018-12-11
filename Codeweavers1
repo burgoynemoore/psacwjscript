@@ -1,0 +1,200 @@
+// ************************************************************************************************************************************************
+// CODEweavers Integration Code (Mike Moore, 3rd December 2018) ***********************************************************************************
+// ************************************************************************************************************************************************
+
+// Listen for the details page we're working with and assign global VARs 
+var CodeweaverURL = "https://services.codeweavers.net/public/v3/JsonFinance/Calculate";
+
+$(document).on('knack-view-render.view_1514', function(event, view, data) {
+
+    // Grab the required default parameter data from the view using field_id
+    var Titre = "";
+    var Term = "";
+    var Deposit = "";
+    var Mileage = "";
+    var CashPriceNorm = "";
+    var CashPricePack = "";
+    var DealerContNorm = "";
+    var DealerContPack = "";
+  	var RegDateUsed = "";
+  	var RegDateFormatted = "";
+  	var RegUsed = "";
+  	var FinanceKey = "";
+  	var NewCar = true;
+  	var IdentifierTypeIs = "";
+  	var ActualIdentifier = "";
+
+    $("#view_1514 div.field_2536").each(function() { // Titre
+        Titre = $(this).find("span:last").text();
+    })
+
+    $("#view_1514 div.field_3558").each(function() { // Term
+        Term = $(this).find("span:last").text();
+    })
+
+    $("#view_1514 div.field_3559").each(function() { // Deposit
+        Deposit = $(this).find("span:last").text();
+    })
+
+    $("#view_1514 div.field_3560").each(function() { // Mileage
+        Mileage = $(this).find("span:last").text();
+    })
+
+    // alert("Titre=" + Titre + ", Term=" + Term + ", Deposit=" + Deposit + ", Mileage=" + Mileage);
+
+    // Grab the Knack UID for this record so we can read the Vehicle data from a VIEW BASED API call
+    var KnackUID = data.id
+    var KnackURL = 'https://api.knack.com/v1/pages/scene_597/views/view_1516/records/'; // VIEW BASED API access to our records   
+    // alert("About to read the knack using: " + KnackURL + KnackUID);
+
+    $.ajax({
+        url: KnackURL + KnackUID,
+        type: 'GET',
+        headers: {
+            'X-Knack-Application-Id': API_ID, // change to your app's API info
+            'X-Knack-REST-API-Key': 'knack' // SECURE - this is a view-based API call!
+        },
+
+        success: function(retData) {
+            // alert('Knack record READ successfully and SECURELY');  
+            // console.log(retData);
+
+            // Extract the values you need from the returned JSON object 
+            CashPriceNorm = retData["field_3726_raw"];
+            CashPricePack = retData["field_3728_raw"];
+            DealerContNorm = retData["field_3551_raw"];
+            DealerContPack = retData["field_3552_raw"];
+          	RegDateUsed = retData["field_2695"];
+          	RegUsed = retData["field_2694"];
+			FinanceKey = retData["field_3557"];
+          
+          	// convert RegDateUsed to proper format but only if it exists (which means it is a used car)
+          	if (RegDateUsed > "") {
+          			RegDateFormatted = RegDateUsed.substr(6,4) + "-" + RegDateUsed.substr(3,2) + "-" + RegDateUsed.substr(0,2);
+              		// alert("This is a USED car, registered " + RegDateFormatted);
+              		NewCar = false;
+              		IdentifierTypeIs = "Reg";
+              		ActualIdentifier = RegUsed;
+            } else {
+              		RegDateFormatted = "";
+              		// alert("This is a NEW car");
+              		NewCar = true;
+              		IdentifierTypeIs = "TitreCode";
+              		ActualIdentifier = Titre;
+            }
+
+            // Abstracted variables for the JSON object we're building below (these appear in BLUE inside the object)
+            var APIkey = "ONH75GHd8x0gu6yfJ6"; // The API key provided by CodeWeavers		
+            var CusRef = "API_REQUEST";
+
+            // Let's now build the object that we need to POST to the CodeWeavers API
+            var CWobject = {
+                Credentials: {
+                    ApiKey: APIkey,
+                },
+                Customer: {
+                    Reference: CusRef,
+                },
+                Parameters: {
+                    Term: Term,
+                    Deposit: Deposit,
+                    DepositType: "Amount",
+                    AnnualMileage: Mileage
+                },
+                VehicleRequests: [{
+                    Id: 4,
+                    Vehicle: {
+                        CashPrice: CashPriceNorm,
+                        RegistrationDate: RegDateFormatted,
+                        IsNew: NewCar,
+                        Identifier: ActualIdentifier,
+                        IdentifierType: IdentifierTypeIs,
+                        Type: "Car",
+                        ImageUrl: "",
+                        DealerVehicleUrl: "",
+                        IsVatQualifying: "true"
+                    },
+                    Products: [{
+                        Key: FinanceKey,
+                        OverrideFinanceParameters: {
+                            DepositContributionsOverride: [{
+                                Name: "Dealer Contribution",
+                                Value: DealerContNorm,
+                                Type: "Dealer",
+                                Uncapped: true
+                            }],
+                            Term: Term,
+                            Deposit: Deposit,
+                            DepositType: "Amount",
+                            AnnualMileage: Mileage,
+                            IsTelematics: false
+                        }
+                    }]
+                }]
+            };
+
+            // Let's write the content of this object to the console for safe keeping and debugging purposes (both object and text versions)
+            // console.log('The object CWobject ...');
+            // console.log(CWobject);
+            // console.log(JSON.stringify(CWobject));
+
+            // Now query CodeWeavers API using some data from Details page and some from View-based API call to Knack (see above)
+            $.ajax({
+                type: "POST",
+                url: CodeweaverURL,
+                data: CWobject,
+                success: function(data) {
+                    // Everything that you need to do after a successful POST to Codeweavers do here ...
+                    // console.log(data);
+                    // console.log(JSON.stringify(data));
+
+                    var AllIncPayment = data.VehicleResults[0].FinanceProductResults[0].Quote.AllInclusiveRegularPayment; // get the figure we need from CodeWeavers JSON payload
+                    // alert('Your All Inclusive Regular Payment will be £' + AllIncPayment + ' per month');
+
+                    // Now push thus AllIncPayment into the Knack record using a view based PUT (object based PUT is not secure due to exposed API key ------
+
+                    var jsondata = { field_3945: AllIncPayment }
+                  
+                    $.ajax({
+                        url: 'https://api.knack.com/v1/pages/scene_598/views/view_1517/records/' + KnackUID,
+                        type: 'PUT',
+                        data: JSON.stringify(jsondata),
+                        headers: {
+                            'X-Knack-Application-Id': API_ID, // change to your app's API info
+                            'X-Knack-REST-API-Key': 'knack' // SECURE - this is a view-based API call!
+                        },
+
+                        success: function(response) {
+                            // alert('Knack record written successfully ... and securely ...');
+
+                            // Now refresh the detail page to populate the payment field - this pushes the field onto the Details page WITHOUT having to refresh the page! Important.
+                            $("#view_1514 div.field_3945").each(function() {
+                                $(this).find("span:last").text("£" + AllIncPayment);
+                            })
+
+                        },
+                        error: function() {
+                            alert('View-based write to Knack failed. Please contact your systems Admin');
+                          }
+                    });
+
+
+                    // --------------------------------------------------------------------------------------------------        
+
+
+                },
+                error: function() { // 
+                    alert('Post to CodeWeavers API failed. Please contact your systems Admin');
+                }
+            });
+
+
+        },
+        error: function() { // 
+            alert('Secure GET of vehicle data failed. Please contact your systems Admin');
+        },
+
+        dataType: "JSON"
+    });
+
+});
